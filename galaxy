@@ -1,0 +1,95 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Galaxy\App\Repositories\NoteRepository;
+use Galaxy\App\Repositories\UserRepository;
+
+$app = require __DIR__ . '/bootstrap/app.php';
+
+$command = $argv[1] ?? 'help';
+
+function println(string $message = ''): void
+{
+    fwrite(STDOUT, $message . PHP_EOL);
+}
+
+function ensure_storage(): void
+{
+    foreach (['data', 'logs', 'cache'] as $directory) {
+        $path = storage_path($directory);
+        if (!is_dir($path)) {
+            mkdir($path, 0775, true);
+        }
+    }
+
+    foreach ([config('storage.users_file'), config('storage.notes_file'), config('storage.rate_limit_file')] as $file) {
+        $path = storage_path((string) $file);
+        if (!is_file($path)) {
+            file_put_contents($path, '[]');
+        }
+    }
+}
+
+match ($command) {
+    'serve' => (function () use ($argv): void {
+        $host = $argv[2] ?? '127.0.0.1';
+        $port = $argv[3] ?? '8080';
+        println("GalaxyPHP running at http://{$host}:{$port}");
+        passthru(PHP_BINARY . ' -S ' . escapeshellarg("{$host}:{$port}") . ' -t ' . escapeshellarg(__DIR__ . '/public'));
+    })(),
+
+    'migrate' => (function (): void {
+        ensure_storage();
+        println('Storage created successfully.');
+    })(),
+
+    'seed' => (function (): void {
+        ensure_storage();
+        $users = new UserRepository();
+        $notes = new NoteRepository();
+
+        $user = $users->findByEmail('admin@galaxyphp.test');
+
+        if (!$user) {
+            $user = $users->create('Bharti Kuldeep', 'admin@galaxyphp.test', 'password');
+            println('Created demo user: admin@galaxyphp.test / password');
+        } else {
+            println('Demo user already exists.');
+        }
+
+        if ($notes->forUser($user['id']) === []) {
+            $notes->create($user['id'], 'Welcome to GalaxyPHP', 'This is a protected note created by the seed command.', 'published');
+            $notes->create($user['id'], 'Build your next module', 'Replace this Notes feature with your own idea: blog, CRM, tasks, SaaS dashboard, or API backend.', 'draft');
+            println('Created demo notes.');
+        } else {
+            println('Demo notes already exist.');
+        }
+    })(),
+
+    'routes' => (function () use ($app): void {
+        require __DIR__ . '/routes/web.php';
+        require __DIR__ . '/routes/api.php';
+        foreach ($app->router()->routes() as $route) {
+            println(str_pad($route['method'], 6) . ' ' . str_pad($route['path'], 24) . ($route['name'] ?? ''));
+        }
+    })(),
+
+    'test' => (function (): void {
+        passthru(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/tests/run.php'), $exitCode);
+        exit($exitCode);
+    })(),
+
+    default => (function (): void {
+        println('GalaxyPHP CLI');
+        println('Usage: php galaxy <command>');
+        println('');
+        println('Commands:');
+        println('  serve [host] [port]  Start local server');
+        println('  migrate              Create storage folders/files');
+        println('  seed                 Create demo account and notes');
+        println('  routes               List routes');
+        println('  test                 Run tests');
+    })(),
+};
